@@ -268,7 +268,7 @@ class MrpProductionSerialMatrix(models.TransientModel):
             first_lot = self.line_ids[0].finished_lot_name
             expected_codes = sorted(line.component_id.default_code for line in self.line_ids if line.finished_lot_name == first_lot)
 
-        codes_in_csv = sorted(csv.products_raw)
+        codes_in_csv = sorted(prod for prod in csv.products_raw if not prod.startswith('!'))
         if expected_codes != codes_in_csv:
             return f"Raw products in CSV: {codes_in_csv}, expected: {expected_codes}"
 
@@ -324,6 +324,8 @@ class MrpProductionSerialMatrix(models.TransientModel):
         for serial in csv.serials:
             lines = [line for line in self.line_ids if line.finished_lot_id and line.finished_lot_name == serial]
             for prod, raw_serial in csv.raw_serials_for_finished(serial):
+                if prod.startswith('!'):
+                    continue
                 matching_line = next((l for l in lines if l.component_id.default_code == prod), None)
                 if matching_line is None:
                     raise ValidationError(f"Cannot find matrix entry for {prod} in line {serial}")

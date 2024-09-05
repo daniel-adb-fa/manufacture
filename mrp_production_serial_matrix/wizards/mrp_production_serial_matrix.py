@@ -13,7 +13,7 @@ class CsvSerialsMatrix:
     def __init__(self, raw_txt):
         self.serials = {}
         serials_file = io.StringIO(raw_txt)
-        reader = csv.reader(serials_file)
+        reader = csv.reader(serials_file, delimiter=';')
         head = next(reader)
         self.product_fin = head[0]
         self.products_raw = [ prod_code for prod_code in head[1:] ]

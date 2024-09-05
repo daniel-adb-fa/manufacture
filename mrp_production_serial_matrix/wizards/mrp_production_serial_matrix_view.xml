@@ -15,9 +15,33 @@
                             invisible="1"
                         />
                     </group>
+
                     <group name="settings">
                         <field name="include_lots" widget="boolean_toggle" />
                     </group>
+                </group>
+                <group name="CSV" string="CSV Import">
+                    <p class="oe_grey" colspan="2">
+                        Copy and paste CSV-data for quick import.
+                    </p>
+                    <field name="csv_import" nolabel='1' colspan='2' style="max-height:150px;"/>
+                    <field name="is_ready_for_import" invisible="1"/>
+                    <div
+                        class="alert alert-warning text-center"
+                        role="alert"
+                        colspan='2'
+                        attrs="{'invisible': ['|',('is_ready_for_import','=',True),('csv_import','=','')]}"
+                    >
+                        <p><i class="fa fa-info-circle"/> Not ready for import:
+                            <field name="csv_warning_msg" nolabel="1" />
+                        </p>
+                    </div>
+                    <button name="button_csv_import"
+                            string="Import -->"
+                            type="object"
+                            class="oe_highlight"
+                            attrs="{'invisible': [('is_ready_for_import', '!=', True)]}"
+                            />
                 </group>
                 <group name="finished_lots" string="Finished Product Serial Numbers">
                     <p

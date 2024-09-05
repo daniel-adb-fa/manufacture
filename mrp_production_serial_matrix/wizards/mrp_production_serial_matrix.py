@@ -5,6 +5,43 @@ from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
 from odoo.tools.float_utils import float_compare, float_is_zero
 
+import io
+import csv
+from collections import Counter
+
+class CsvSerialsMatrix:
+    def __init__(self, raw_txt):
+        self.serials = {}
+        serials_file = io.StringIO(raw_txt)
+        reader = csv.reader(serials_file)
+        head = next(reader)
+        self.product_fin = head[0]
+        self.products_raw = [ prod_code for prod_code in head[1:] ]
+        for line in reader:
+            serial_fin = line[0]
+            serials_raw = line[1:]
+            if len(serials_raw) != self.n_raw_products:
+                raise RuntimeError(f"Number of serials must be identical in each line (found {serials_raw}, expected {self.n_raw_products})")
+            self.serials[serial_fin] = serials_raw
+
+    @property
+    def n_raw_products(self):
+        return len(self.products_raw)
+
+    @property
+    def n_lines(self):
+        return len(self.serials)
+
+    @property
+    def is_valid(self):
+        return self.serials and self.products_raw
+
+    def raw_serials_for_finished(self, fin_serial):
+        return zip(self.products_raw, self.serials[fin_serial])
+
+    def __repr__(self):
+        return f"{self.products_raw} => {self.product_fin}: {self.n_lines} lines"
+
 
 class MrpProductionSerialMatrix(models.TransientModel):
     _name = "mrp.production.serial.matrix"
@@ -22,6 +59,15 @@ class MrpProductionSerialMatrix(models.TransientModel):
     company_id = fields.Many2one(
         related="production_id.company_id",
         readonly=True,
+    )
+    csv_import = fields.Text(
+        help="Copy + Paste directly into this field, do not edit here as it may be very slow!",
+    )
+    csv_warning_msg = fields.Char(
+        compute="_compute_ready_for_import"
+    )
+    is_ready_for_import = fields.Boolean(
+        compute="_compute_ready_for_import"
     )
     finished_lot_ids = fields.Many2many(
         string="Finished Product Serial Numbers",
@@ -128,6 +174,7 @@ class MrpProductionSerialMatrix(models.TransientModel):
                 "line_ids": [(0, 0, x) for x in matrix_lines],
                 "production_id": production_id,
                 "finished_lot_ids": [(4, lot_id, 0) for lot_id in finished_lots.ids],
+                "csv_import": ""
             }
         )
         return res
@@ -203,6 +250,91 @@ class MrpProductionSerialMatrix(models.TransientModel):
                 }
             )
         return res
+
+    def _validate(self, csv_data):
+        try:
+            csv = CsvSerialsMatrix(csv_data)
+        except RuntimeError as err:
+            return str(err)
+        except:
+            return "CSV can't be parsed"
+
+        if csv.product_fin != self.product_id.default_code:
+            return f"Finished product is {csv.product_fin}, expected {self.product_id.default_code}"
+
+        expected_codes = []
+
+        if self.line_ids:
+            first_lot = self.line_ids[0].finished_lot_name
+            expected_codes = sorted(line.component_id.default_code for line in self.line_ids if line.finished_lot_name == first_lot)
+
+        codes_in_csv = sorted(csv.products_raw)
+        if expected_codes != codes_in_csv:
+            return f"Raw products in CSV: {codes_in_csv}, expected: {expected_codes}"
+
+        return ""
+
+
+    @api.depends("csv_import")
+    def _compute_ready_for_import(self):
+        self.ensure_one()
+        if not self.csv_import:
+            self.is_ready_for_import = False
+            self.csv_warning_msg = ""
+            return
+
+        warning = self._validate(self.csv_import)
+
+        self.csv_warning_msg = warning
+        self.is_ready_for_import = not warning
+
+
+    def button_csv_import(self):
+        self.ensure_one()
+        do_nothing = {  # return value that keeps open our wizard
+            'view_mode': 'form',
+            'res_model': self._name,
+            'res_id': self.id,
+            'type': 'ir.actions.act_window',
+            'target': 'new'
+        }
+
+        if not self.csv_import:
+            raise ValidationError("Nothing to import")
+
+        csv = CsvSerialsMatrix(self.csv_import)
+
+        # 1) Fill in finished_lot_ids. Use existing serials if possible, or create new ones if necessary.
+        lots = self.env["stock.production.lot"]
+
+        finished_lots = [(5,0,0)]
+        for serial in csv.serials:
+            serial_obj = lots.search([('name','=',serial),('product_id','=',self.product_id.id)])
+            if serial_obj:
+                finished_lots.append((4,serial_obj.id,0))
+            else:
+                vals = {'name': serial, 'product_id': self.product_id.id}
+                finished_lots.append((0, 0, vals))
+
+        self.write({"finished_lot_ids": finished_lots})
+        self._onchange_finished_lot_ids()
+        self.line_ids._compute_allowed_component_lot_ids()
+
+        # 2) Fill in Matrix Cells, finding matching serial-objects. If no matching object is found, error out.
+        for serial in csv.serials:
+            lines = [line for line in self.line_ids if line.finished_lot_id and line.finished_lot_name == serial]
+            for prod, raw_serial in csv.raw_serials_for_finished(serial):
+                matching_line = next((l for l in lines if l.component_id.default_code == prod), None)
+                if matching_line is None:
+                    raise ValidationError(f"Cannot find matrix entry for {prod} in line {serial}")
+                matching_lot_id = next((lot_id for lot_id in matching_line.allowed_component_lot_ids if lot_id.name == raw_serial), None)
+                if matching_lot_id is None:
+                    raise ValidationError(f"Serial {raw_serial} for {prod} is not available")
+                matching_line.write({"component_lot_id": matching_lot_id})
+                lines.remove(matching_line)
+
+        return do_nothing
+
 
     @api.onchange("finished_lot_ids", "include_lots")
     def _onchange_finished_lot_ids(self):

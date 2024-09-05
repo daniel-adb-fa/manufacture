@@ -22,7 +22,9 @@
                 </group>
                 <group name="CSV" string="CSV Import">
                     <p class="oe_grey" colspan="2">
-                        Copy and paste CSV-data for quick import.
+                        Copy and paste CSV-data for quick import. Use ';' as delimiter. The first column corresponds to the finished product,
+                        all following columns refer to raw components. The first row contains Internal References of all products, the following
+                        rows contain the serial numbers.
                     </p>
                     <field name="csv_import" nolabel='1' colspan='2' style="max-height:150px;"/>
                     <field name="is_ready_for_import" invisible="1"/>
@@ -44,11 +46,6 @@
                             />
                 </group>
                 <group name="finished_lots" string="Finished Product Serial Numbers">
-                    <p
-                        class="oe_grey"
-                        colspan="2"
-                    >Select the Serial Numbers of the Finished Products that are going to be produced in this MO. You can create new ones on the fly if needed.</p>
-                    <br />
                     <field
                         name="finished_lot_ids"
                         widget="many2many_tags"

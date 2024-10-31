@@ -5,12 +5,77 @@ from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
 from odoo.tools.float_utils import float_compare, float_is_zero
 
+from string import Formatter
 import io
 import csv
-from collections import Counter
+
+FormatStringPrefix = 'format:'
+
+
+def is_valid_format_string(format_string):
+
+    def is_valid_serial_format(literal_text, field_name, format_spec, conversion):
+        return field_name in ("num", None) and conversion is None
+
+    return format_string and all(is_valid_serial_format(*f) for f in Formatter().parse(format_string))
+
+
+def make_serials_from_seq(sequence_str, format_string):
+
+    if not is_valid_format_string(format_string):
+        raise RuntimeError(f'"{format_string}" is not a valid format string!')
+
+    tokens = [tk.strip() for tk in sequence_str.split(',')]
+
+    nums = []
+
+    for tk in tokens:
+        try:
+            bounds = [int(bnd) for bnd in tk.split('-')]
+        except ValueError:
+            raise RuntimeError(f'{sequence_str} is not a valid sequence string.')
+
+        if len(bounds) == 1:
+            nums.append(bounds[0])
+        elif len(bounds) == 2:
+            nums.extend(range(bounds[0], bounds[1]+1))
+        else:
+            raise RuntimeError("The sequence string is not valid: Unexpected ',' or '-'.")
+
+    # duplicate ranges in sequence are simply ignored:
+    serials = [format_string.format(num=ser) for ser in sorted(set(nums))]
+
+    if len(serials) != len(set(serials)):
+        raise RuntimeError("The format string does not produce distinct serials.")
+
+    return serials
 
 class CsvSerialsMatrix:
-    def __init__(self, raw_txt):
+    def __init__(self, raw_txt, matrix):
+        if raw_txt.startswith(FormatStringPrefix):
+            prod_fin = matrix.product_id.default_code
+            comps = matrix._get_tracked_components(matrix.production_id)
+            prods_raw = [comp[0].default_code for comp in comps]
+            self._init_from_format_string(raw_txt, prod_fin, prods_raw)
+        else:
+            self._init_from_csv(raw_txt)
+
+    def _init_from_format_string(self, raw_txt, prod_fin, prods_raw):
+        lines = raw_txt.splitlines()
+        format_string = lines[0][len(FormatStringPrefix):].strip()
+        sequence = lines[1]
+        if any(line.strip() for line in lines[2:]):
+            raise RuntimeError("Format string entry must have two lines only!")
+
+        serials_raw = make_serials_from_seq(sequence, format_string)
+
+        self.product_fin = prod_fin
+        self.products_raw = prods_raw
+        self.serials = {}
+        for serial in serials_raw:
+            self.serials[serial] = [serial] * len(self.products_raw)
+
+    def _init_from_csv(self, raw_txt):
         self.serials = {}
         serials_file = io.StringIO(raw_txt)
         reader = csv.reader(serials_file, delimiter=';')
@@ -179,8 +244,8 @@ class MrpProductionSerialMatrix(models.TransientModel):
         )
         return res
 
-    def _get_matrix_lines(self, production, finished_lots):
-        tracked_components = []
+    def _get_tracked_components(self, production):
+        rv = []
         for move in production.move_raw_ids:
             rounding = move.product_id.uom_id.rounding
             if float_is_zero(move.product_qty, precision_rounding=rounding):
@@ -198,9 +263,13 @@ class MrpProductionSerialMatrix(models.TransientModel):
                 qty_per_finished_unit = move.product_qty / production.product_qty
             if move.product_id.tracking == "serial":
                 for i in range(1, int(qty_per_finished_unit) + 1):
-                    tracked_components.append((move.product_id, i, 1))
+                    rv.append((move.product_id, i, 1))
             elif move.product_id.tracking == "lot" and self.include_lots:
-                tracked_components.append((move.product_id, 0, qty_per_finished_unit))
+                rv.append((move.product_id, 0, qty_per_finished_unit))
+        return rv
+
+    def _get_matrix_lines(self, production, finished_lots):
+        tracked_components = self._get_tracked_components(production)
 
         matrix_lines = []
         current_lot = False
@@ -253,7 +322,7 @@ class MrpProductionSerialMatrix(models.TransientModel):
 
     def _validate(self, csv_data):
         try:
-            csv = CsvSerialsMatrix(csv_data)
+            csv = CsvSerialsMatrix(csv_data, self)
         except RuntimeError as err:
             return str(err)
         except:
@@ -302,7 +371,7 @@ class MrpProductionSerialMatrix(models.TransientModel):
         if not self.csv_import:
             raise ValidationError("Nothing to import")
 
-        csv = CsvSerialsMatrix(self.csv_import)
+        csv = CsvSerialsMatrix(self.csv_import, self)
 
         # 1) Fill in finished_lot_ids. Use existing serials if possible, or create new ones if necessary.
         lots = self.env["stock.production.lot"]

@@ -15,6 +15,9 @@
                     attrs="{'invisible':['|', ('show_serial_matrix', '=', False), ('state','in',('draft', 'cancel', 'done'))]}"
                 />
             </button>
+            <button name="action_generate_serial" position="replace">
+                <span attrs="{'invisible': ['|', ('product_tracking', 'in', ('none', False)), ('lot_producing_id', '!=', False)]}">Use Serial Numbers Matrix to enter</span>
+            </button>
         </field>
     </record>
 </odoo>

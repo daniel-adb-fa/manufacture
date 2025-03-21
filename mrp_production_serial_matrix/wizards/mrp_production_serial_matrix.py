@@ -253,14 +253,8 @@ class MrpProductionSerialMatrix(models.TransientModel):
                 # they can be set to 0 units to consume. In such case, we ignore
                 # the move.
                 continue
-            boml = move.bom_line_id
             # TODO: UoM (MO/BoM using different UoMs than product's defaults).
-            if boml:
-                qty_per_finished_unit = boml.product_qty / boml.bom_id.product_qty
-            else:
-                # The product could have been added for the specific MO but not
-                # be part of the BoM.
-                qty_per_finished_unit = move.product_qty / production.product_qty
+            qty_per_finished_unit = move.product_qty / production.product_qty
             if move.product_id.tracking == "serial":
                 for i in range(1, int(qty_per_finished_unit) + 1):
                     rv.append((move.product_id, i, 1))
